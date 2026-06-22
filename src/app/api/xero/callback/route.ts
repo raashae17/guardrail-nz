@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
 import { encrypt } from "@/lib/crypto";
 import { exchangeCode, listConnections } from "@/lib/xero-oauth";
 

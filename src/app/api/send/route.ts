@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
 import { xeroGet } from "@/lib/xero-client";
 
 // Sends a reminder via Xero's native /Invoices/{InvoiceID}/Email endpoint.
