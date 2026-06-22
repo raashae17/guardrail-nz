@@ -28,11 +28,26 @@ interface XeroBankTxResp {
   }>;
 }
 
+interface XeroBillsResp {
+  Invoices: Array<{
+    InvoiceID: string;
+    Type: string;
+    Status: string;
+    DateString?: string;
+    DueDateString?: string;
+    Total: number;
+    AmountDue: number;
+    Contact?: { Name: string };
+    LineItems?: Array<{ Description?: string; Quantity?: number; UnitAmount?: number; AccountCode?: string }>;
+  }>;
+}
+
 export async function syncTenant(tenantId: string) {
-  const [contacts, invoices, txs] = await Promise.all([
+  const [contacts, invoices, txs, bills] = await Promise.all([
     xeroGet<XeroContactsResp>(tenantId, "/Contacts"),
-    xeroGet<XeroInvoicesResp>(tenantId, "/Invoices?Statuses=AUTHORISED,SUBMITTED"),
+    xeroGet<XeroInvoicesResp>(tenantId, "/Invoices?Statuses=AUTHORISED,SUBMITTED,PAID"),
     xeroGet<XeroBankTxResp>(tenantId, "/BankTransactions"),
+    xeroGet<XeroBillsResp>(tenantId, "/Invoices?where=Type==\"ACCPAY\""),
   ]);
 
   for (const c of contacts.Contacts) {
@@ -86,6 +101,30 @@ export async function syncTenant(tenantId: string) {
         total: tx.Total,
       },
       update: { status: tx.Status, total: tx.Total },
+    });
+  }
+
+  for (const b of bills.Invoices) {
+    await prisma.bill.upsert({
+      where: { xeroInvoiceId: b.InvoiceID },
+      create: {
+        xeroInvoiceId: b.InvoiceID,
+        tenantId,
+        supplierName: b.Contact?.Name ?? "Unknown",
+        date: b.DateString ? new Date(b.DateString) : null,
+        dueDate: b.DueDateString ? new Date(b.DueDateString) : null,
+        total: b.Total,
+        amountDue: b.AmountDue,
+        lineItemsJson: b.LineItems ?? [],
+      },
+      update: {
+        supplierName: b.Contact?.Name ?? "Unknown",
+        date: b.DateString ? new Date(b.DateString) : null,
+        dueDate: b.DueDateString ? new Date(b.DueDateString) : null,
+        total: b.Total,
+        amountDue: b.AmountDue,
+        lineItemsJson: b.LineItems ?? [],
+      },
     });
   }
 }

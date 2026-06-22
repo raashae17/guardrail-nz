@@ -1,22 +1,74 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "./db";
-import { daysOverdue, type AnonymizedInvoice } from "./anonymize";
+import { daysOverdue } from "./anonymize";
 
-export type Health = "GREEN" | "ORANGE" | "RED";
+export type Severity = "RED" | "ORANGE" | "GREEN";
 
-export interface ActionItem {
-  kind: "OVERDUE_INVOICE" | "SUPPLIER_COST" | "GENERIC";
+export interface ActionCard {
+  severity: Severity;
+  kind: "OVERDUE_INVOICE" | "PRICE_ALERT" | "MARGIN" | "GENERIC";
+  title: string;
+  body: string;
   invoiceRef?: string;
   contactToken?: string;
-  message: string;
+  amount?: number;
 }
 
 export interface DashboardInsights {
-  health: Health;
-  actionItems: ActionItem[];
+  runwayDays: number;
+  runwayLabel: string;
+  cards: ActionCard[];
 }
 
-async function loadAnonymizedInvoices(tenantId: string): Promise<AnonymizedInvoice[]> {
+function runwayLabel(days: number): string {
+  if (days >= 60) return "Safe";
+  if (days >= 30) return "Watch";
+  return "Tight";
+}
+
+async function computeRunway(tenantId: string): Promise<number> {
+  const since = new Date(Date.now() - 90 * 86_400_000);
+  const [txs, bills] = await Promise.all([
+    prisma.bankTransaction.findMany({ where: { tenantId, date: { gte: since } } }),
+    prisma.bill.findMany({ where: { tenantId } }),
+  ]);
+
+  const cashOnHand = txs.reduce((s, t) => {
+    const sign = t.type?.toUpperCase().includes("RECEIVE") ? 1 : -1;
+    return s + sign * Number(t.total);
+  }, 0);
+
+  const outflow90 = txs
+    .filter((t) => !t.type?.toUpperCase().includes("RECEIVE"))
+    .reduce((s, t) => s + Number(t.total), 0);
+  const dailyBurn = outflow90 / 90 || 1;
+
+  const openBills = bills.reduce((s, b) => s + Number(b.amountDue), 0);
+  const net = Math.max(cashOnHand - openBills, 0);
+  return Math.max(0, Math.floor(net / dailyBurn));
+}
+
+interface AnonInvoice {
+  invoiceRef: string;
+  contactToken: string;
+  status: string;
+  daysOverdue: number | null;
+  amountDue: number;
+}
+
+interface AnonBill {
+  supplierToken: string;
+  date: string | null;
+  total: number;
+  topLine?: { desc: string; unit: number };
+}
+
+function stripAddress(text: string): string {
+  // crude removal of street numbers + obvious address tokens before LLM
+  return text.replace(/\b\d+\s+[A-Z][a-z]+\s+(Street|St|Road|Rd|Ave|Avenue|Lane|Ln)\b/gi, "");
+}
+
+async function loadAnonInvoices(tenantId: string): Promise<AnonInvoice[]> {
   const invoices = await prisma.invoice.findMany({
     where: { tenantId, status: { in: ["AUTHORISED", "SUBMITTED"] } },
     include: { contact: true },
@@ -27,53 +79,69 @@ async function loadAnonymizedInvoices(tenantId: string): Promise<AnonymizedInvoi
     invoiceRef: i.invoiceNumber ?? i.xeroInvoiceId.slice(0, 8),
     contactToken: i.contact?.anonToken ?? "C_UNKNOWN",
     status: i.status,
-    dueDate: i.dueDate?.toISOString() ?? null,
-    total: Number(i.total),
-    amountDue: Number(i.amountDue),
     daysOverdue: daysOverdue(i.dueDate),
+    amountDue: Number(i.amountDue),
   }));
 }
 
-function localHealth(rows: AnonymizedInvoice[]): Health {
-  const overdueAmount = rows
-    .filter((r) => (r.daysOverdue ?? 0) > 0)
-    .reduce((s, r) => s + r.amountDue, 0);
-  const totalOpen = rows.reduce((s, r) => s + r.amountDue, 0) || 1;
-  const ratio = overdueAmount / totalOpen;
-  if (ratio > 0.4) return "RED";
-  if (ratio > 0.15) return "ORANGE";
-  return "GREEN";
+async function loadAnonBills(tenantId: string): Promise<AnonBill[]> {
+  const bills = await prisma.bill.findMany({
+    where: { tenantId },
+    orderBy: { date: "desc" },
+    take: 200,
+  });
+  return bills.map((b) => {
+    const items = (b.lineItemsJson as Array<{ Description?: string; UnitAmount?: number }> | null) ?? [];
+    const top = items[0];
+    return {
+      supplierToken: `S_${Buffer.from(b.supplierName).toString("hex").slice(0, 8).toUpperCase()}`,
+      date: b.date?.toISOString().slice(0, 10) ?? null,
+      total: Number(b.total),
+      topLine: top
+        ? { desc: stripAddress(top.Description ?? "").slice(0, 60), unit: top.UnitAmount ?? 0 }
+        : undefined,
+    };
+  });
+}
+
+function localCards(invoices: AnonInvoice[]): ActionCard[] {
+  return invoices
+    .filter((i) => (i.daysOverdue ?? 0) > 0)
+    .slice(0, 3)
+    .map<ActionCard>((i) => ({
+      severity: (i.daysOverdue ?? 0) > 14 ? "RED" : "ORANGE",
+      kind: "OVERDUE_INVOICE",
+      title: `Invoice ${i.invoiceRef} is ${i.daysOverdue} days late`,
+      body: `${i.contactToken} owes you $${i.amountDue.toFixed(2)}. Tap to nudge.`,
+      invoiceRef: i.invoiceRef,
+      contactToken: i.contactToken,
+      amount: i.amountDue,
+    }));
 }
 
 export async function buildInsights(tenantId: string): Promise<DashboardInsights> {
-  const rows = await loadAnonymizedInvoices(tenantId);
-  const health = localHealth(rows);
+  const [invoices, bills, runwayDays] = await Promise.all([
+    loadAnonInvoices(tenantId),
+    loadAnonBills(tenantId),
+    computeRunway(tenantId),
+  ]);
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    const items: ActionItem[] = rows
-      .filter((r) => (r.daysOverdue ?? 0) > 0)
-      .slice(0, 3)
-      .map((r) => ({
-        kind: "OVERDUE_INVOICE",
-        invoiceRef: r.invoiceRef,
-        contactToken: r.contactToken,
-        message: `Invoice ${r.invoiceRef} is ${r.daysOverdue} days overdue ($${r.amountDue.toFixed(2)}).`,
-      }));
-    return { health, actionItems: items };
+    return { runwayDays, runwayLabel: runwayLabel(runwayDays), cards: localCards(invoices) };
   }
 
   const client = new Anthropic({ apiKey });
   const model = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
   const resp = await client.messages.create({
     model,
-    max_tokens: 1024,
+    max_tokens: 1500,
     system:
-      "You analyze anonymized SMB AR data. Contacts are tokens like C_ABCDEF12 — never invent real names. Return up to 3 urgent action items as strict JSON: {\"actionItems\":[{\"kind\":\"OVERDUE_INVOICE\",\"invoiceRef\":\"...\",\"contactToken\":\"...\",\"message\":\"...\"}]}",
+      'You analyze anonymized NZ tradie AR/AP data. Contacts use tokens like C_ABCDEF12 and suppliers S_XXXXXXXX — never invent real names. Detect overdue invoices and supplier unit-cost hikes (>5%). Return strict JSON: {"cards":[{"severity":"RED|ORANGE","kind":"OVERDUE_INVOICE|PRICE_ALERT|MARGIN","title":"...","body":"...","invoiceRef":"...","contactToken":"...","amount":0}]}. Max 3 cards, most urgent first.',
     messages: [
       {
         role: "user",
-        content: `Open invoices (anonymized):\n${JSON.stringify(rows, null, 2)}\n\nReturn JSON only.`,
+        content: `Open invoices: ${JSON.stringify(invoices)}\n\nRecent bills: ${JSON.stringify(bills)}\n\nReturn JSON only.`,
       },
     ],
   });
@@ -83,10 +151,14 @@ export async function buildInsights(tenantId: string): Promise<DashboardInsights
     .join("");
   try {
     const match = text.match(/\{[\s\S]*\}/);
-    const parsed = match ? JSON.parse(match[0]) : { actionItems: [] };
-    return { health, actionItems: (parsed.actionItems ?? []).slice(0, 3) };
+    const parsed = match ? JSON.parse(match[0]) : { cards: [] };
+    return {
+      runwayDays,
+      runwayLabel: runwayLabel(runwayDays),
+      cards: (parsed.cards ?? []).slice(0, 3),
+    };
   } catch {
-    return { health, actionItems: [] };
+    return { runwayDays, runwayLabel: runwayLabel(runwayDays), cards: localCards(invoices) };
   }
 }
 
@@ -107,7 +179,7 @@ export async function draftReminderEmail(tenantId: string, invoiceRef: string): 
   };
 
   if (!apiKey) {
-    return `Subject: Friendly reminder — invoice ${payload.invoiceRef}\n\nHi {{customer_name}},\n\nOur records show invoice ${payload.invoiceRef} for $${payload.amountDue.toFixed(2)} is ${overdue} days overdue. Could you confirm payment status at your earliest convenience?\n\nThanks,\n{{your_name}}`;
+    return `Subject: Friendly reminder — invoice ${payload.invoiceRef}\n\nHi {{customer_name}},\n\nOur records show invoice ${payload.invoiceRef} for $${payload.amountDue.toFixed(2)} is ${overdue} days overdue. Could you confirm payment status?\n\nThanks,\n{{your_name}}`;
   }
 
   const client = new Anthropic({ apiKey });
@@ -116,7 +188,7 @@ export async function draftReminderEmail(tenantId: string, invoiceRef: string): 
     model,
     max_tokens: 600,
     system:
-      "Draft a polite, professional NZ-English payment reminder email. Use placeholders {{customer_name}} and {{your_name}} — the contact is anonymized.",
+      "Draft a polite, professional NZ-English payment reminder for a tradie. Use placeholders {{customer_name}} and {{your_name}} — contact is anonymized.",
     messages: [{ role: "user", content: `Anonymized invoice: ${JSON.stringify(payload)}` }],
   });
   return resp.content

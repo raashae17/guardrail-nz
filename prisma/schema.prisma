@@ -19,6 +19,21 @@ model XeroConnection {
   invoices          Invoice[]
   contacts          Contact[]
   bankTransactions  BankTransaction[]
+  bills             Bill[]
+}
+
+model Bill {
+  id            String   @id @default(cuid())
+  xeroInvoiceId String   @unique
+  tenantId      String
+  supplierName  String
+  date          DateTime?
+  dueDate       DateTime?
+  total         Decimal
+  amountDue     Decimal
+  lineItemsJson Json?
+  connection    XeroConnection @relation(fields: [tenantId], references: [tenantId])
+  updatedAt     DateTime @updatedAt
 }
 
 model Contact {
