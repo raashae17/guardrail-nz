@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model XeroConnection {
+  id                String   @id @default(cuid())
+  tenantId          String   @unique
+  tenantName        String
+  encryptedAccess   String
+  encryptedRefresh  String
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  invoices          Invoice[]
+  contacts          Contact[]
+  bankTransactions  BankTransaction[]
+}
+
+model Contact {
+  id                String   @id @default(cuid())
+  xeroContactId     String   @unique
+  tenantId          String
+  anonToken         String   @unique
+  name              String
+  paymentHistoryJson Json?
+  connection        XeroConnection @relation(fields: [tenantId], references: [tenantId])
+  invoices          Invoice[]
+}
+
+model Invoice {
+  id            String   @id @default(cuid())
+  xeroInvoiceId String   @unique
+  tenantId      String
+  invoiceNumber String?
+  status        String
+  dueDate       DateTime?
+  total         Decimal
+  amountDue     Decimal
+  contactId     String?
+  contact       Contact? @relation(fields: [contactId], references: [id])
+  connection    XeroConnection @relation(fields: [tenantId], references: [tenantId])
+  updatedAt     DateTime @updatedAt
+}
+
+model BankTransaction {
+  id              String   @id @default(cuid())
+  xeroTxId        String   @unique
+  tenantId        String
+  type            String
+  status          String
+  date            DateTime
+  total           Decimal
+  connection      XeroConnection @relation(fields: [tenantId], references: [tenantId])
+}
+
+model OAuthState {
+  state         String   @id
+  codeVerifier  String
+  createdAt     DateTime @default(now())
+}
