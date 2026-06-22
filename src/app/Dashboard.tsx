@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ActionCard, DashboardInsights, Severity } from "@/lib/insights";
+import { DEMO_DRAFT } from "@/lib/demo";
 
 const RUNWAY_TONE = (days: number) =>
   days >= 60 ? "text-emerald-600" : days >= 30 ? "text-amber-600" : "text-rose-600";
@@ -21,9 +22,11 @@ const CARD_DOT: Record<Severity, string> = {
 export default function Dashboard({
   tenantName,
   insights,
+  demo = false,
 }: {
   tenantName: string;
   insights: DashboardInsights;
+  demo?: boolean;
 }) {
   const [index, setIndex] = useState(0);
   const [modal, setModal] = useState<{ card: ActionCard; draft: string } | null>(null);
@@ -38,13 +41,18 @@ export default function Dashboard({
     if (!card.invoiceRef) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceRef: card.invoiceRef }),
-      });
-      const { draft } = await res.json();
-      setModal({ card, draft });
+      if (demo) {
+        await new Promise((r) => setTimeout(r, 400));
+        setModal({ card, draft: DEMO_DRAFT });
+      } else {
+        const res = await fetch("/api/draft", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ invoiceRef: card.invoiceRef }),
+        });
+        const { draft } = await res.json();
+        setModal({ card, draft });
+      }
       setEditing(false);
       setSent(false);
     } finally {
@@ -56,11 +64,15 @@ export default function Dashboard({
     if (!modal) return;
     setLoading(true);
     try {
-      await fetch("/api/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceRef: modal.card.invoiceRef, draft: modal.draft }),
-      });
+      if (demo) {
+        await new Promise((r) => setTimeout(r, 600));
+      } else {
+        await fetch("/api/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ invoiceRef: modal.card.invoiceRef, draft: modal.draft }),
+        });
+      }
       setSent(true);
     } finally {
       setLoading(false);

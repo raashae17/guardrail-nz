@@ -1,10 +1,19 @@
 import { prisma } from "@/lib/db";
 import { buildInsights } from "@/lib/insights";
+import { DEMO_INSIGHTS } from "@/lib/demo";
 import Dashboard from "./Dashboard";
 
 export const dynamic = "force-dynamic";
 
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: { demo?: string };
+}) {
+  if (searchParams.demo) {
+    return <Dashboard tenantName="Demo Tradie Ltd" insights={DEMO_INSIGHTS} demo />;
+  }
+
   const conn = await prisma.xeroConnection.findFirst().catch(() => null);
   if (!conn) {
     return (
@@ -18,6 +27,12 @@ export default async function Page() {
           className="mt-10 inline-flex items-center justify-center gap-2 rounded-xl bg-[#13B5EA] px-5 py-4 text-base font-semibold text-white shadow-sm"
         >
           Sign in with Xero
+        </a>
+        <a
+          href="/?demo=1"
+          className="mt-3 text-sm text-slate-500 underline"
+        >
+          See a demo instead
         </a>
         <p className="mt-3 text-xs text-slate-400">
           Read-only by default · granular scopes · tokens encrypted at rest
