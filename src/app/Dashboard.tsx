@@ -2,11 +2,7 @@
 
 import { useState } from "react";
 import type { ActionCard, DashboardInsights, Severity } from "@/lib/insights";
-import {
-  DEMO_REMINDER,
-  DEMO_OWNER_ALERT,
-  DEMO_SUPPLIER_EMAIL,
-} from "@/lib/demo";
+import { INDUSTRY_CONFIG, type IndustryDemo } from "@/lib/demo";
 
 const RUNWAY_TONE = (d: number) =>
   d >= 60 ? "text-emerald-600" : d >= 30 ? "text-amber-600" : "text-rose-600";
@@ -39,12 +35,15 @@ type Modal = InvoiceModal | SupplierModal;
 export default function Dashboard({
   tenantName,
   insights,
-  demo = false,
+  demoKey,
 }: {
   tenantName: string;
   insights: DashboardInsights;
-  demo?: boolean;
+  demoKey?: IndustryDemo;
 }) {
+  const demo = !!demoKey;
+  const demoDrafts = demoKey ? INDUSTRY_CONFIG[demoKey].drafts : {};
+
   const [index, setIndex] = useState(0);
   const [modal, setModal] = useState<Modal | null>(null);
   const [editing, setEditing] = useState(false);
@@ -59,9 +58,9 @@ export default function Dashboard({
     try {
       if (card.kind === "OVERDUE_INVOICE") {
         let draft: string;
-        if (demo) {
-          await new Promise((r) => setTimeout(r, 400));
-          draft = DEMO_REMINDER;
+        if (demo && card.invoiceRef && demoDrafts[card.invoiceRef]) {
+          await new Promise((r) => setTimeout(r, 350));
+          draft = demoDrafts[card.invoiceRef].invoiceReminder!;
         } else {
           const res = await fetch("/api/draft", {
             method: "POST",
@@ -76,10 +75,11 @@ export default function Dashboard({
       } else if (card.kind === "PRICE_ALERT") {
         let ownerAlert: string;
         let supplierEmail: string;
-        if (demo) {
-          await new Promise((r) => setTimeout(r, 500));
-          ownerAlert = DEMO_OWNER_ALERT;
-          supplierEmail = DEMO_SUPPLIER_EMAIL;
+        const draftKey = card.supplierToken ?? "";
+        if (demo && demoDrafts[draftKey]) {
+          await new Promise((r) => setTimeout(r, 450));
+          ownerAlert = demoDrafts[draftKey].ownerAlert!;
+          supplierEmail = demoDrafts[draftKey].supplierEmail!;
         } else {
           const res = await fetch("/api/draft", {
             method: "POST",
@@ -115,7 +115,7 @@ export default function Dashboard({
           body: JSON.stringify({ invoiceRef: modal.card.invoiceRef, draft: modal.draft }),
         });
       } else {
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 500));
       }
       setSent(true);
     } finally {
@@ -134,7 +134,7 @@ export default function Dashboard({
           body: JSON.stringify({ kind: "supplier", supplierToken: modal.card.supplierToken, draft: modal.supplierEmail }),
         });
       } else {
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 500));
       }
       setSent(true);
     } finally {
@@ -149,11 +149,14 @@ export default function Dashboard({
       ? "Draft negotiation"
       : null;
 
+  const industryLabel = demoKey ? INDUSTRY_CONFIG[demoKey].label : null;
+
   return (
     <main className="mx-auto min-h-screen max-w-md bg-slate-50 px-5 pb-24 pt-10">
       {demo && (
-        <div className="mb-6 rounded-lg bg-amber-100 px-4 py-2 text-center text-xs text-amber-800">
-          Demo mode — no real data
+        <div className="mb-5 flex items-center justify-between rounded-xl bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          <span>Demo · {industryLabel}</span>
+          <a href="/" className="font-medium underline">← All demos</a>
         </div>
       )}
 
@@ -167,19 +170,21 @@ export default function Dashboard({
         <p className="text-sm font-medium uppercase tracking-wider text-slate-500">
           Days of cash runway
         </p>
-        <div className={`mt-2 text-7xl font-black tracking-tight ${RUNWAY_TONE(insights.runwayDays)}`}>
+        <div className={`mt-2 text-8xl font-black tracking-tight ${RUNWAY_TONE(insights.runwayDays)}`}>
           {insights.runwayDays}
         </div>
-        <p className="mt-1 text-lg font-semibold text-slate-700">{insights.runwayLabel}</p>
+        <p className="mt-1 text-xl font-semibold text-slate-700">{insights.runwayLabel}</p>
       </section>
 
       {/* Card stack */}
       <section className="mt-12">
         <div className="mb-3 flex items-baseline justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Action feed</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Action feed
+          </h2>
           {cards.length > 0 && (
             <span className="text-xs text-slate-400">
-              {Math.min(index + 1, cards.length)} / {cards.length}
+              {index + 1} / {cards.length}
             </span>
           )}
         </div>
@@ -194,11 +199,11 @@ export default function Dashboard({
               <div className="flex items-center gap-2">
                 <span className={`h-2.5 w-2.5 rounded-full ${CARD_DOT[current.severity]}`} />
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  {current.kind.replace("_", " ")}
+                  {current.kind === "OVERDUE_INVOICE" ? "Overdue invoice" : "Price alert"}
                 </span>
               </div>
               <h3 className="mt-3 text-xl font-bold text-slate-900">{current.title}</h3>
-              <p className="mt-2 text-slate-700">{current.body}</p>
+              <p className="mt-2 leading-relaxed text-slate-700">{current.body}</p>
 
               {actionLabel && (
                 <button
@@ -213,14 +218,23 @@ export default function Dashboard({
 
             <div className="mt-4 flex justify-between">
               <button
-                onClick={() => setIndex((i) => Math.max(0, i - 1))}
+                onClick={() => { setIndex((i) => Math.max(0, i - 1)); setSent(false); }}
                 disabled={index === 0}
                 className="rounded-full border bg-white px-4 py-2 text-sm disabled:opacity-30"
               >
                 ← Prev
               </button>
+              <div className="flex gap-1.5 items-center">
+                {cards.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { setIndex(i); setSent(false); }}
+                    className={`h-2 w-2 rounded-full transition ${i === index ? "bg-slate-800" : "bg-slate-300"}`}
+                  />
+                ))}
+              </div>
               <button
-                onClick={() => setIndex((i) => Math.min(cards.length - 1, i + 1))}
+                onClick={() => { setIndex((i) => Math.min(cards.length - 1, i + 1)); setSent(false); }}
                 disabled={index >= cards.length - 1}
                 className="rounded-full border bg-white px-4 py-2 text-sm disabled:opacity-30"
               >
@@ -237,9 +251,7 @@ export default function Dashboard({
           <div className="w-full max-w-md rounded-t-3xl bg-white p-6 shadow-2xl">
             <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-200" />
             <h3 className="text-lg font-bold">Reminder — {modal.card.invoiceRef}</h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Tone tuned to customer risk profile
-            </p>
+            <p className="mt-0.5 text-xs text-slate-400">Tone tuned to customer risk profile</p>
 
             {editing ? (
               <textarea
@@ -249,7 +261,7 @@ export default function Dashboard({
                 className="mt-3 w-full rounded-lg border border-slate-300 p-3 text-sm"
               />
             ) : (
-              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm">
+              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm leading-relaxed">
                 {modal.draft}
               </pre>
             )}
@@ -281,34 +293,32 @@ export default function Dashboard({
         <div className="fixed inset-0 z-20 flex items-end justify-center bg-slate-900/60">
           <div className="w-full max-w-md rounded-t-3xl bg-white p-6 shadow-2xl">
             <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-200" />
-            <h3 className="text-lg font-bold">Price alert — {modal.card.supplierToken}</h3>
+            <h3 className="text-lg font-bold">
+              {modal.card.changePct?.toFixed(1)}% price hike — {modal.card.supplierToken}
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-400 truncate">"{modal.card.itemDescription}"</p>
 
-            {/* Tab bar */}
             <div className="mt-3 flex rounded-lg border border-slate-200 p-1">
               <button
                 onClick={() => setModal({ ...modal, activeTab: "alert" })}
-                className={`flex-1 rounded-md py-1.5 text-sm font-medium transition ${
-                  modal.activeTab === "alert" ? "bg-slate-900 text-white" : "text-slate-600"
-                }`}
+                className={`flex-1 rounded-md py-2 text-sm font-medium transition ${modal.activeTab === "alert" ? "bg-slate-900 text-white" : "text-slate-600"}`}
               >
                 Owner alert
               </button>
               <button
                 onClick={() => setModal({ ...modal, activeTab: "email" })}
-                className={`flex-1 rounded-md py-1.5 text-sm font-medium transition ${
-                  modal.activeTab === "email" ? "bg-slate-900 text-white" : "text-slate-600"
-                }`}
+                className={`flex-1 rounded-md py-2 text-sm font-medium transition ${modal.activeTab === "email" ? "bg-slate-900 text-white" : "text-slate-600"}`}
               >
                 Supplier email
               </button>
             </div>
 
             {modal.activeTab === "alert" ? (
-              <div className="mt-3 rounded-lg bg-amber-50 p-4 text-sm text-slate-800">
+              <div className="mt-3 rounded-lg bg-amber-50 p-4 text-sm leading-relaxed text-slate-800">
                 {modal.ownerAlert}
               </div>
             ) : (
-              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm">
+              <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm leading-relaxed">
                 {modal.supplierEmail}
               </pre>
             )}
@@ -317,12 +327,11 @@ export default function Dashboard({
               <button
                 onClick={sendSupplierEmail}
                 disabled={loading || sent}
-                className="mt-5 w-full rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
+                className="mt-4 w-full rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
               >
                 {sent ? "Sent ✓" : loading ? "Sending…" : "Send negotiation email"}
               </button>
             )}
-
             <button onClick={() => setModal(null)} className="mt-3 w-full py-2 text-sm text-slate-500">
               Close
             </button>
