@@ -8,23 +8,59 @@ datasource db {
 }
 
 model XeroConnection {
-  id                String   @id @default(cuid())
-  tenantId          String   @unique
+  id                String      @id @default(cuid())
+  tenantId          String      @unique
   tenantName        String
+  industry          String?     // "trades" | "hospitality" | "ecommerce" | null
   encryptedAccess   String
   encryptedRefresh  String
   expiresAt         DateTime
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
   invoices          Invoice[]
   contacts          Contact[]
   bankTransactions  BankTransaction[]
   bills             Bill[]
+  quotedJobs        QuotedJob[]
+  menuItems         MenuItem[]
+}
+
+model Contact {
+  id                 String         @id @default(cuid())
+  xeroContactId      String         @unique
+  tenantId           String
+  anonToken          String         @unique
+  name               String
+  avgDaysLate        Float          @default(0)
+  totalRevenue       Decimal        @default(0)
+  paymentHistoryJson Json?
+  connection         XeroConnection @relation(fields: [tenantId], references: [tenantId])
+  invoices           Invoice[]
+}
+
+model Invoice {
+  id               String         @id @default(cuid())
+  xeroInvoiceId    String         @unique
+  tenantId         String
+  invoiceNumber    String?
+  reference        String?        // Xero reference field — tradies put job/stage info here
+  status           String
+  dueDate          DateTime?
+  issueDate        DateTime?
+  total            Decimal
+  amountDue        Decimal
+  contactId        String?
+  isProgressStage  Boolean        @default(false)
+  stageNumber      Int?
+  lineItemsJson    Json?
+  contact          Contact?       @relation(fields: [contactId], references: [id])
+  connection       XeroConnection @relation(fields: [tenantId], references: [tenantId])
+  updatedAt        DateTime       @updatedAt
 }
 
 model Bill {
-  id            String   @id @default(cuid())
-  xeroInvoiceId String   @unique
+  id            String         @id @default(cuid())
+  xeroInvoiceId String         @unique
   tenantId      String
   supplierName  String
   date          DateTime?
@@ -33,48 +69,56 @@ model Bill {
   amountDue     Decimal
   lineItemsJson Json?
   connection    XeroConnection @relation(fields: [tenantId], references: [tenantId])
-  updatedAt     DateTime @updatedAt
-}
-
-model Contact {
-  id                String   @id @default(cuid())
-  xeroContactId     String   @unique
-  tenantId          String
-  anonToken         String   @unique
-  name              String
-  paymentHistoryJson Json?
-  connection        XeroConnection @relation(fields: [tenantId], references: [tenantId])
-  invoices          Invoice[]
-}
-
-model Invoice {
-  id            String   @id @default(cuid())
-  xeroInvoiceId String   @unique
-  tenantId      String
-  invoiceNumber String?
-  status        String
-  dueDate       DateTime?
-  total         Decimal
-  amountDue     Decimal
-  contactId     String?
-  contact       Contact? @relation(fields: [contactId], references: [id])
-  connection    XeroConnection @relation(fields: [tenantId], references: [tenantId])
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime       @updatedAt
 }
 
 model BankTransaction {
-  id              String   @id @default(cuid())
-  xeroTxId        String   @unique
+  id       String         @id @default(cuid())
+  xeroTxId String         @unique
+  tenantId String
+  type     String
+  status   String
+  date     DateTime
+  total    Decimal
+  connection XeroConnection @relation(fields: [tenantId], references: [tenantId])
+}
+
+// Trades: track what materials were priced at quote time vs current supplier price
+model QuotedJob {
+  id              String         @id @default(cuid())
   tenantId        String
-  type            String
-  status          String
-  date            DateTime
-  total           Decimal
+  jobReference    String
+  contactToken    String
+  quotedAt        DateTime
+  totalQuotedCost Decimal
+  lineItemsJson   Json           // [{description, qty, unitAtQuote}]
+  exposureAmount  Decimal        @default(0) // current cost - quoted cost
+  flagged         Boolean        @default(false)
   connection      XeroConnection @relation(fields: [tenantId], references: [tenantId])
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([tenantId, jobReference])
+}
+
+// Hospitality: track menu items and their target margins
+model MenuItem {
+  id             String         @id @default(cuid())
+  tenantId       String
+  name           String
+  category       String         // "beverage" | "food" | "catering"
+  currentPrice   Decimal
+  targetMarginPct Decimal       @default(70)
+  cogsJson       Json           // [{ingredient, unitCost, qty}]
+  marginAlert    Boolean        @default(false)
+  suggestedPrice Decimal?
+  connection     XeroConnection @relation(fields: [tenantId], references: [tenantId])
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([tenantId, name])
 }
 
 model OAuthState {
-  state         String   @id
-  codeVerifier  String
-  createdAt     DateTime @default(now())
+  state        String   @id
+  codeVerifier String
+  createdAt    DateTime @default(now())
 }

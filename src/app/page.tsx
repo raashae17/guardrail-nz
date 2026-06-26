@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { buildInsights } from "@/lib/insights";
+import { buildIndustryInsights } from "@/lib/pipeline";
 import { INDUSTRY_CONFIG, type IndustryDemo } from "@/lib/demo";
 import Dashboard from "./Dashboard";
 
@@ -15,13 +15,7 @@ export default async function Page({
   const demoKey = searchParams.demo as IndustryDemo | undefined;
   if (demoKey && VALID_DEMOS.includes(demoKey)) {
     const cfg = INDUSTRY_CONFIG[demoKey];
-    return (
-      <Dashboard
-        tenantName={cfg.tenantName}
-        insights={cfg.insights}
-        demoKey={demoKey}
-      />
-    );
+    return <Dashboard tenantName={cfg.tenantName} insights={cfg.insights} demoKey={demoKey} />;
   }
 
   const conn = await prisma.xeroConnection.findFirst().catch(() => null);
@@ -32,14 +26,12 @@ export default async function Page({
         <p className="mt-3 text-center text-slate-600">
           Cash health for NZ business. One number. Three cards. Zero spreadsheets.
         </p>
-
         <a
           href="/api/xero/connect"
           className="mt-10 inline-flex items-center justify-center gap-2 rounded-xl bg-[#13B5EA] px-5 py-4 text-base font-semibold text-white shadow-sm"
         >
           Sign in with Xero
         </a>
-
         <div className="mt-10">
           <p className="text-center text-xs font-semibold uppercase tracking-widest text-slate-400">
             Try a live demo
@@ -64,7 +56,6 @@ export default async function Page({
             })}
           </div>
         </div>
-
         <p className="mt-8 text-center text-xs text-slate-400">
           Read-only by default · granular scopes · tokens encrypted at rest
         </p>
@@ -72,6 +63,6 @@ export default async function Page({
     );
   }
 
-  const insights = await buildInsights(conn.tenantId);
+  const insights = await buildIndustryInsights(conn.tenantId);
   return <Dashboard tenantName={conn.tenantName} insights={insights} />;
 }

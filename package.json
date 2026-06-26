@@ -10,6 +10,8 @@
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
+    "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:studio": "prisma studio",
     "sync:xero": "tsx scripts/sync-xero.ts"
   },
   "dependencies": {
